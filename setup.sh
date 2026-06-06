@@ -17,12 +17,12 @@ cd "$HERE"
 # Pin the libfreenect commit we validated. Set to "" to track master instead.
 FREENECT_COMMIT="09a1f09"
 
-echo "==> [1/7] system build dependencies (sudo)"
+echo "==> [1/8] system build dependencies (sudo)"
 sudo apt-get update
 sudo apt-get install -y git cmake build-essential pkg-config \
     libusb-1.0-0-dev freeglut3-dev libxmu-dev libxi-dev python3-venv
 
-echo "==> [2/7] clone libfreenect"
+echo "==> [2/8] clone libfreenect"
 if [ ! -d libfreenect/.git ]; then
     git clone https://github.com/OpenKinect/libfreenect.git
 fi
@@ -30,7 +30,7 @@ fi
   git fetch --all
   if [ -n "$FREENECT_COMMIT" ]; then git checkout "$FREENECT_COMMIT"; fi )
 
-echo "==> [3/7] apply the model-1473 camera-only sync patch"
+echo "==> [3/8] apply the model-1473 camera-only sync patch"
 # The c_sync wrapper claims MOTOR|CAMERA; on the 1473 the motor claim fails
 # fatally (LIBUSB_ERROR_IO) because the motor lives behind audio firmware.
 # We select CAMERA only. Apply only if not already applied.
@@ -41,19 +41,19 @@ else
     echo "    patch already present, skipping"
 fi
 
-echo "==> [4/7] udev rules (MODE=0666 -> no root needed) + user groups (sudo)"
+echo "==> [4/8] udev rules (MODE=0666 -> no root needed) + user groups (sudo)"
 sudo cp libfreenect/platform/linux/udev/51-kinect.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 sudo usermod -aG plugdev,video "$USER" || true
 
-echo "==> [5/7] python venv with numpy<2 (avoids the numpy-2 ABI clash with the cython binding)"
+echo "==> [5/8] python venv with numpy<2 (avoids the numpy-2 ABI clash with the cython binding)"
 python3 -m venv venv
 unset PYTHONPATH                         # keep ROS/system numpy off the path
 ./venv/bin/pip -q install --upgrade pip
-./venv/bin/pip -q install "numpy<2" "cython>=3" pillow
+./venv/bin/pip -q install "numpy<2" "cython>=3" pillow pyusb
 VENV="$HERE/venv"
 
-echo "==> [6/7] build + install the C libraries (sudo make install)"
+echo "==> [6/8] build + install the C libraries (sudo make install)"
 ( cd libfreenect
   rm -rf build && mkdir build && cd build
   cmake .. -DBUILD_EXAMPLES=ON -DBUILD_PYTHON3=ON -DBUILD_CV=OFF
@@ -61,7 +61,7 @@ echo "==> [6/7] build + install the C libraries (sudo make install)"
   sudo make install
   sudo ldconfig )
 
-echo "==> [7/7] build the python binding against the venv (numpy<2 + venv cython)"
+echo "==> [7/8] build the python binding against the venv (numpy<2 + venv cython)"
 # Build in a separate dir using the VENV python+cython so build-time and runtime
 # numpy match. The resulting binding has an RPATH into build-venv/lib, so the
 # patched sync lib must live there too — which it does, since we build it here.
@@ -73,9 +73,20 @@ echo "==> [7/7] build the python binding against the venv (numpy<2 + venv cython
   SO="$(find . -name 'freenect*.so' | head -1)"
   cp "$SO" "$VENV/lib/python3.10/site-packages/freenect.so" )
 
+echo "==> [8/8] fetch the motor/audio firmware (audios.bin) for tilt/LED control"
+# Extracted from an official Microsoft Xbox 360 system update (~116 MB download).
+# Not redistributed in this repo. Skips if already present.
+if [ ! -f firmware/audios.bin ]; then
+    mkdir -p firmware
+    ( cd firmware && python3 "$HERE/libfreenect/src/fwfetcher.py" audios.bin ) \
+        || echo "    (firmware fetch failed — motor control will be unavailable until "\
+                "you run libfreenect/src/fwfetcher.py; camera streaming is unaffected)"
+fi
+
 echo
 echo "==> DONE."
 echo "   * Log out and back in once (plugdev/video group change)."
 echo "   * Connect the Kinect WITH its 12V power (see README hardware section)."
 echo "   * Verify:  unset PYTHONPATH && ./venv/bin/python -c 'import freenect; print(\"ok\")'"
 echo "   * Stream:  unset PYTHONPATH && ./venv/bin/python stream_server.py  -> http://localhost:8080"
+echo "   * Motor :  unset PYTHONPATH && ./venv/bin/python kinect_motor.py --sweep"

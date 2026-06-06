@@ -32,3 +32,19 @@
   patches/0001-1473-sync-camera-only.patch, wrote detailed README (hardware +
   Linux replication), added docs/sample_rgbd.jpg.
 - git init + initial commit 9791097 (libfreenect/ and venv/ gitignored).
+
+## 2026-06-06 16:30
+- Tilt motor: on the 1473 the motor/LED/accel are behind the AUDIO device
+  (045e:02ad), which boots in a bootloader state (1 interface) needing audios.bin
+  firmware. libfreenect's open wedges the audio device (keep_alive_led +
+  libusb_reset_device -> LIBUSB_ERROR_IO), so reimplemented BOTH the firmware
+  upload (loader.c) and the motor/LED/accel protocol (tilt.c) directly over pyusb
+  in kinect_motor.py. Fetched audios.bin via fwfetcher.py (Xbox sys update).
+  Verified physical tilt: accel Z swings +352/-352 at +25/-25 deg.
+- Integrated controls into stream_server.py: vertical tilt slider + LED buttons +
+  live accel readout; HTTP API POST /tilt, POST /led, GET /accel. Thread-safe,
+  self-healing MotorController (re-flashes firmware on demand). Camera + motor run
+  simultaneously at ~30 fps.
+- Updated README (new §2.7 motor/firmware protocol, usage, troubleshooting),
+  setup.sh (pyusb + fwfetcher step), .gitignore (firmware/ — MS firmware, not
+  redistributed). Removed dead libfreenect-based motor_test.py.

@@ -2,6 +2,10 @@
 libfreenect/
 venv/
 
+# Microsoft Kinect audio firmware — extracted via fwfetcher.py, do NOT redistribute
+firmware/
+audios.bin
+
 # Captured data & logs
 captures/
 *.log

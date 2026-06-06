@@ -1,12 +1,16 @@
 # Streaming an Xbox 360 Kinect (model 1473) on Linux
 
-Live **RGB + depth** streaming from an Xbox 360 **Kinect model 1473** on Ubuntu
-22.04, via [libfreenect](https://github.com/OpenKinect/libfreenect). Includes a
-browser MJPEG live view, a headless frame grabber, a millisecond USB enumeration
-watcher used to debug the hardware, and a one-shot setup script.
+Live **RGB + depth** streaming **and full actuator control** (tilt motor, status
+LED, accelerometer) of an Xbox 360 **Kinect model 1473** on Ubuntu 22.04, via
+[libfreenect](https://github.com/OpenKinect/libfreenect) for the camera and
+direct USB (pyusb) for the motor. Includes a browser UI (live MJPEG + a vertical
+tilt slider + LED buttons + accel readout), a headless frame grabber, a
+millisecond USB enumeration watcher used to debug the hardware, and a one-shot
+setup script.
 
 Output is RGB on the left and colorized depth on the right (blue = near, red =
-far) at ~30 fps. Run `stream_server.py` and open the browser to see it live.
+far) at ~30 fps. Run `stream_server.py` and open the browser to see it live and
+drive the motor; or use `kinect_motor.py` from the CLI.
 
 ---
 
@@ -40,10 +44,10 @@ Microsoft (`045e`) devices:
 
 Model **1473** is a later revision of the Xbox 360 Kinect that moved toward the
 "Kinect for Windows" protocol. The practical consequence for us: **the tilt
-motor and status LED are controlled through the audio device's firmware**, not a
-standalone motor endpoint. Trying to drive the motor/LED without first uploading
-the audio firmware fails — see the libfreenect quirks below. (Depth + RGB need
-**no** firmware upload.)
+motor, status LED, and accelerometer are controlled through the audio device**,
+not a standalone motor endpoint — and the audio device must have its firmware
+(`audios.bin`) uploaded first. We do exactly that (see §2.7). (Depth + RGB need
+**no** firmware upload; the motor does.)
 
 > Model 1414 is the *original* 360 Kinect and behaves slightly differently
 > (real motor subdevice, no audio-firmware dependency). The 1473 is the one this
@@ -151,6 +155,55 @@ copies are patched automatically.
   `DEPTH_REGISTERED` (depth aligned to the RGB camera).
 - **RGB:** `VIDEO_RGB` → `uint8` 640×480×3.
 
+### 2.7 Driving the tilt motor / LED / accelerometer (model-1473)
+This was the hard part, and `kinect_motor.py` implements it from scratch over
+**pyusb**, deliberately bypassing libfreenect. Why and how:
+
+**The motor lives behind the audio device.** On the 1473 there is no usable motor
+endpoint; `src/tilt.c` sends bulk commands to the **audio device** (`045e:02ad`)
+on endpoints `0x01` (OUT) / `0x81` (IN). But the audio device boots in a
+**bootloader state** (1 USB interface) that only understands a *firmware-upload*
+protocol. Until `audios.bin` is uploaded, motor/LED/accel commands fail with
+`LIBUSB_ERROR_IO`. After upload + launch it re-enumerates in **running state**
+(≥2 interfaces) and accepts motor commands.
+
+**Why not let libfreenect do it?** libfreenect's open path calls
+`fnusb_keep_alive_led()` which `libusb_open`s the audio device and immediately
+`libusb_reset_device()`s it; on this machine that wedges the audio device with
+`LIBUSB_ERROR_IO`, so its built-in upload never completes. pyusb opens the same
+device cleanly, so we drive it directly.
+
+**Getting the firmware (`audios.bin`).** It's extracted from an official
+Microsoft Xbox 360 system update by libfreenect's fetcher (not redistributed in
+this repo — `firmware/` is git-ignored):
+```bash
+unset PYTHONPATH
+mkdir -p firmware && cd firmware
+python3 ../libfreenect/src/fwfetcher.py audios.bin   # downloads ~116 MB from xbox.com
+cd ..
+cp firmware/audios.bin ~/.libfreenect/               # optional: a search location
+```
+`kinect_motor.py` looks for it in `$KINECT_FW`, `./firmware/audios.bin`,
+`./audios.bin`, then `~/.libfreenect/audios.bin`.
+
+**The protocols we reimplement** (all little-endian; magic `0x06022009`, replies
+carry magic `0x0a6fe000`):
+- *Firmware upload* (`src/loader.c`): per 0x4000-byte page send a
+  `bootloader_command{tag, bytes, cmd=0x03, addr}` then the page in ≤512-byte
+  bulk writes, read a 12-byte ack; finish with `cmd=0x04` at the entry address to
+  launch. The device then re-enumerates from 1→2 interfaces.
+- *Motor / LED / accel* (`src/tilt.c`): `cmd=0x803b` tilt (arg2 = degrees,
+  −31..31), `cmd=0x10` LED (arg2: 1=off, 2=blink-green, 3=green, 4=red),
+  `cmd=0x8032` reads a 104-byte reply containing accelerometer x/y/z and tilt.
+
+`kinect_motor.py` auto-detects bootloader vs running state, flashes if needed,
+waits for re-enumeration, then issues commands. `stream_server.py` wraps it in a
+thread-safe, self-healing controller (the camera-open path resets the audio
+device, so the controller re-flashes on demand if a motor command hits
+`LIBUSB_ERROR_IO`). **Firmware lives in volatile RAM**, so a power-cycle (or a
+USB reset) reverts the audio device to bootloader — it's simply re-flashed on the
+next motor command.
+
 ---
 
 ## 3. Usage
@@ -161,9 +214,16 @@ off the path), and use the venv's python.
 ```bash
 unset PYTHONPATH
 
-# Live browser stream (RGB | colorized depth), auto-recovers from dropouts:
+# Live browser stream + actuator controls (RGB | depth, tilt slider, LED, accel):
 ./venv/bin/python stream_server.py            # http://localhost:8080
 ./venv/bin/python stream_server.py --port 9000
+
+# CLI motor control (auto-uploads firmware on first use):
+./venv/bin/python kinect_motor.py --sweep     # LED walk + tilt sweep demo
+./venv/bin/python kinect_motor.py --tilt 20   # tilt to +20 deg (-31..31)
+./venv/bin/python kinect_motor.py --led red   # off | blink | green | red
+./venv/bin/python kinect_motor.py --accel     # read accelerometer + tilt angle
+./venv/bin/python kinect_motor.py --upload-only   # just flash audios.bin
 
 # Headless still capture -> ./captures/ (rgb png, 16-bit depth png, depth vis, raw npy):
 ./venv/bin/python capture_frames.py --frames 5
@@ -172,6 +232,16 @@ unset PYTHONPATH
 freenect-camtest
 freenect-glview            # GUI viewer, needs a display (DISPLAY=:0)
 ```
+
+### Browser controls
+At `http://localhost:8080` the page shows the live RGB|depth stream plus a
+control panel: a **vertical tilt slider** (−31..31°, applied on release), **LED**
+buttons (Green / Blink / Red / Off), and a live **accelerometer / tilt** readout
+(polled once a second). The first tilt/LED action uploads the audio firmware
+(~a few seconds) and may briefly blip the camera stream.
+
+HTTP API (handy for scripting): `POST /tilt?deg=N`, `POST /led?state=red`,
+`GET /accel` (JSON).
 
 ### Run the stream as a resilient background service
 The Kinect can transiently drop off the bus. To keep the stream up no matter
@@ -191,12 +261,13 @@ disappears it resets the libfreenect sync engine and reopens automatically.
 | Path | What it is |
 |------|------------|
 | `setup.sh` | One-shot reproducible install (deps → patch → build → venv). |
-| `stream_server.py` | Live MJPEG server, RGB + colorized depth, self-healing. |
+| `stream_server.py` | Live MJPEG server + actuator controls (tilt/LED/accel), self-healing. |
+| `kinect_motor.py` | Tilt motor / LED / accelerometer driver over pyusb (incl. firmware upload). |
 | `capture_frames.py` | Headless still capture to `captures/` (png + raw npy). |
 | `kinect_usb_watch.py` | Millisecond USB enumeration watcher (hardware debugging). |
 | `patches/0001-1473-sync-camera-only.patch` | The camera-only sync patch. |
 | `WORKLOG.md` | Chronological log of how this was brought up. |
-| `libfreenect/`, `venv/` | Build tree + python env — **git-ignored**, recreated by `setup.sh`. |
+| `libfreenect/`, `venv/`, `firmware/` | Build tree, python env, firmware — **git-ignored**, recreated by `setup.sh` / `fwfetcher.py`. |
 
 ---
 
@@ -210,19 +281,29 @@ disappears it resets the libfreenect sync engine and reopens automatically.
 | `Could not open device: LIBUSB_ERROR_IO` from Python | The 1473 motor-claim issue — apply the camera-only patch and rebuild **build-venv** (see §2.3/§2.5). |
 | `numpy.dtype size changed ... Expected 96 got 88` | numpy ABI mismatch — use the venv (`numpy<2`) and `unset PYTHONPATH` (see §2.4). |
 | `Failed to set the LED of K4W or 1473 device` | Harmless, ignore (see §2.3). |
-| Audio device's USB devnum keeps changing | The 1473 audio re-enumerates periodically; irrelevant to depth/RGB. |
+| Audio device's USB devnum keeps changing | The 1473 audio re-enumerates periodically (bootloader state); normal — it's flashed on motor use. |
+| Motor commands do nothing / `LIBUSB_ERROR_IO` from `kinect_motor.py` | Audio device in bootloader state with no firmware. Ensure `audios.bin` is findable (see §2.7); the script re-flashes automatically. Stop `stream_server.py` if running standalone CLI. |
+| `audios.bin not found` | Run `libfreenect/src/fwfetcher.py` to fetch it (see §2.7). |
+| Motor worked, then stopped after replug/power-cycle | Firmware is in volatile RAM; it re-flashes on the next motor command. |
 | `ModuleNotFoundError: freenect` | Use the venv python and `unset PYTHONPATH`; binding lives in `venv/lib/python3.10/site-packages/freenect.so`. |
 
 ---
 
 ## 6. Not done here (future work)
-- **Microphone array** — needs the `audios.bin` audio-firmware upload
-  (`-DBUILD_AUDIO=ON`); not set up.
+- **Microphone array** — the audio firmware is uploaded (we use it for the
+  motor), but the 4-channel audio *streaming* path (CEMD data + iso endpoints)
+  isn't wired up.
 - **Metric / registered depth** — switch capture format to `DEPTH_MM` /
   `DEPTH_REGISTERED`.
 - **`/dev/video` device** — pipe frames through `v4l2loopback` so generic apps
   (OBS, ffplay, browsers) see the Kinect as a normal webcam.
 
+## What works
+RGB + depth streaming (~30 fps), tilt motor (±31°), status LED, and
+accelerometer — all controllable from the browser UI or CLI, camera and motor
+simultaneously.
+
 ## Environment this was validated on
 Ubuntu 22.04.5 (kernel 6.8), x86_64, Python 3.10, libfreenect master `09a1f09`,
-numpy 1.26.4, Cython 3.2.5, Kinect model **1473** with 12 V soldered directly.
+numpy 1.26.4, Cython 3.2.5, pyusb 1.x, Kinect model **1473** with 12 V soldered
+directly.
