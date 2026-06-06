@@ -1,0 +1,11 @@
+# External source + build trees (recreated by setup.sh)
+libfreenect/
+venv/
+
+# Captured data & logs
+captures/
+*.log
+
+# Python noise
+__pycache__/
+*.pyc

@@ -1,0 +1,16 @@
+diff --git a/wrappers/c_sync/libfreenect_sync.c b/wrappers/c_sync/libfreenect_sync.c
+index 84acdc2..7c3823b 100644
+--- a/wrappers/c_sync/libfreenect_sync.c
++++ b/wrappers/c_sync/libfreenect_sync.c
+@@ -222,7 +222,10 @@ static int init_thread(void)
+ 	// We claim both the motor and the camera, because we can't know in advance
+ 	// which devices the caller will want, and the c_sync interface doesn't
+ 	// support audio, so there's no reason to claim the device needlessly.
+-	freenect_select_subdevices(ctx, (freenect_device_flags)(FREENECT_DEVICE_MOTOR | FREENECT_DEVICE_CAMERA));
++	// NOTE (model 1473 patch): the 1473/K4W motor sits behind the audio
++	// firmware, so claiming FREENECT_DEVICE_MOTOR makes open fail fatally with
++	// LIBUSB_ERROR_IO. Select CAMERA only so depth+RGB open cleanly.
++	freenect_select_subdevices(ctx, (freenect_device_flags)(FREENECT_DEVICE_CAMERA));
+ 	ret = pthread_create(&thread, NULL, init, NULL);
+ 	if (ret != 0) return ret;
+ 	return 0;
