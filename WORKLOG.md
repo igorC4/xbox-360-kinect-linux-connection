@@ -22,3 +22,13 @@
   frames (1280x480). Depth sparse only because scene is inside the ~50 cm dead zone.
 - TODO/optional: mic array (needs audios.bin firmware upload); metric depth via
   DEPTH_MM/REGISTERED; v4l2loopback if a /dev/video device is ever wanted.
+
+## 2026-06-06 15:50
+- Transient: Kinect dropped off USB bus mid-stream (iso packet loss / 12 V margin);
+  non-resilient server died. Made stream_server.py self-healing (reset sync +
+  reopen on dead device) and ran it under a while-true restart supervisor. Back at
+  ~30 fps; verified full RGBD frames (two people, clean depth map).
+- Wrote setup.sh (one-shot reproducible install), extracted the 1473 patch to
+  patches/0001-1473-sync-camera-only.patch, wrote detailed README (hardware +
+  Linux replication), added docs/sample_rgbd.jpg.
+- git init + initial commit 9791097 (libfreenect/ and venv/ gitignored).
