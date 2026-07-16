@@ -1,5 +1,4 @@
 # External source + build trees (recreated by setup.sh)
-libfreenect/
 venv/
 
 # Microsoft Kinect audio firmware — extracted via fwfetcher.py, do NOT redistribute

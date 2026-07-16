@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
 
 # Pin the libfreenect commit we validated. Set to "" to track master instead.
-FREENECT_COMMIT="09a1f09"
+FREENECT_COMMIT=""
 
 echo "==> [1/8] system build dependencies (sudo)"
 sudo apt-get update
@@ -23,7 +23,9 @@ sudo apt-get install -y git cmake build-essential pkg-config \
     libusb-1.0-0-dev freeglut3-dev libxmu-dev libxi-dev python3-venv
 
 echo "==> [2/8] clone libfreenect"
-if [ ! -d libfreenect/.git ]; then
+if [ -d libfreenect ] && git -C libfreenect rev-parse --git-dir >/dev/null 2>&1; then
+    echo "    libfreenect already present (submodule or clone), skipping clone"
+else
     git clone https://github.com/OpenKinect/libfreenect.git
 fi
 ( cd libfreenect
@@ -50,13 +52,13 @@ echo "==> [5/8] python venv with numpy<2 (avoids the numpy-2 ABI clash with the 
 python3 -m venv venv
 unset PYTHONPATH                         # keep ROS/system numpy off the path
 ./venv/bin/pip -q install --upgrade pip
-./venv/bin/pip -q install "numpy<2" "cython>=3" pillow pyusb
+./venv/bin/pip -q install "numpy<2" "cython>=3" setuptools pillow pyusb
 VENV="$HERE/venv"
 
 echo "==> [6/8] build + install the C libraries (sudo make install)"
 ( cd libfreenect
   rm -rf build && mkdir build && cd build
-  cmake .. -DBUILD_EXAMPLES=ON -DBUILD_PYTHON3=ON -DBUILD_CV=OFF
+  cmake .. -DBUILD_EXAMPLES=ON -DBUILD_PYTHON3=OFF -DBUILD_CV=OFF
   make -j"$(nproc)"
   sudo make install
   sudo ldconfig )
@@ -71,7 +73,8 @@ echo "==> [7/8] build the python binding against the venv (numpy<2 + venv cython
       -DPython3_EXECUTABLE="$VENV/bin/python"
   PATH="$VENV/bin:$PATH" make -j"$(nproc)"
   SO="$(find . -name 'freenect*.so' | head -1)"
-  cp "$SO" "$VENV/lib/python3.10/site-packages/freenect.so" )
+  SITE_PKG="$("$VENV/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+  cp "$SO" "$SITE_PKG/freenect.so" )
 
 echo "==> [8/8] fetch the motor/audio firmware (audios.bin) for tilt/LED control"
 # Extracted from an official Microsoft Xbox 360 system update (~116 MB download).

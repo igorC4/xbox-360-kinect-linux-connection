@@ -304,7 +304,7 @@ disappears it resets the libfreenect sync engine and reopens automatically.
 | Motor commands do nothing / `LIBUSB_ERROR_IO` from `kinect_motor.py` | Audio device in bootloader state with no firmware. Ensure `audios.bin` is findable (see §2.7); the script re-flashes automatically. Stop `stream_server.py` if running standalone CLI. |
 | `audios.bin not found` | Run `libfreenect/src/fwfetcher.py` to fetch it (see §2.7). |
 | Motor worked, then stopped after replug/power-cycle | Firmware is in volatile RAM; it re-flashes on the next motor command. |
-| `ModuleNotFoundError: freenect` | Use the venv python and `unset PYTHONPATH`; binding lives in `venv/lib/python3.10/site-packages/freenect.so`. |
+| `ModuleNotFoundError: freenect` | Use the venv python and `unset PYTHONPATH`; binding lives in `venv/lib/python3.XX/site-packages/freenect.so`. |
 
 ---
 
