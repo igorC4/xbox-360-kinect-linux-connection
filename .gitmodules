@@ -1,0 +1,6 @@
+[submodule "rtabmap"]
+	path = rtabmap
+	url = git@github.com:igorC4/rtabmap.git
+[submodule "libfreenect"]
+	path = libfreenect
+	url = git@github.com:igorC4/libfreenect.git
